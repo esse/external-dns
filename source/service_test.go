@@ -18,6 +18,7 @@ package source
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"sort"
 	"strings"
@@ -2712,6 +2713,7 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 		podsReady                []bool
 		targetRefs               []*v1.ObjectReference
 		publishNotReadyAddresses bool
+		publishPublicHostIP      bool
 		expected                 []*endpoint.Endpoint
 		expectError              bool
 	}{
@@ -2742,10 +2744,79 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 				{APIVersion: "", Kind: "Pod", Name: "foo-1"},
 			},
 			false,
+			false,
 			[]*endpoint.Endpoint{
 				{DNSName: "foo-0.service.example.org", Targets: endpoint.Targets{"1.1.1.1"}},
 				{DNSName: "foo-1.service.example.org", Targets: endpoint.Targets{"1.1.1.2"}},
 				{DNSName: "service.example.org", Targets: endpoint.Targets{"1.1.1.1", "1.1.1.2"}},
+			},
+			false,
+		},
+		{
+			"annotated Headless services return endpoint for selected Pod with public IP when we provide option to publish external IP",
+			"",
+			"testing",
+			"foo",
+			v1.ServiceTypeClusterIP,
+			"",
+			"",
+			false,
+			map[string]string{"component": "foo"},
+			map[string]string{
+				hostnameAnnotationKey: "service.example.org",
+			},
+			v1.ClusterIPNone,
+			[]string{"1.1.1.1"},
+			map[string]string{
+				"component": "foo",
+			},
+			[]string{},
+			[]string{"foo-0"},
+			[]string{"foo-0"},
+			[]bool{true, true},
+			[]*v1.ObjectReference{
+				{APIVersion: "", Kind: "Pod", Name: "foo-0"},
+			},
+			false,
+			true,
+			[]*endpoint.Endpoint{
+				{DNSName: "foo-0.service.example.org", Targets: endpoint.Targets{"0.0.0.0"}},
+				{DNSName: "service.example.org", Targets: endpoint.Targets{"0.0.0.0"}},
+			},
+			false,
+		},
+		{
+			"annotated Headless services return endpoints for each selected Pod with public IP when we provide option to publish external IP",
+			"",
+			"testing",
+			"foo",
+			v1.ServiceTypeClusterIP,
+			"",
+			"",
+			false,
+			map[string]string{"component": "foo"},
+			map[string]string{
+				hostnameAnnotationKey: "service.example.org",
+			},
+			v1.ClusterIPNone,
+			[]string{"1.1.1.1", "1.1.1.2"},
+			map[string]string{
+				"component": "foo",
+			},
+			[]string{},
+			[]string{"foo-0", "foo-1"},
+			[]string{"foo-0", "foo-1"},
+			[]bool{true, true},
+			[]*v1.ObjectReference{
+				{APIVersion: "", Kind: "Pod", Name: "foo-0"},
+				{APIVersion: "", Kind: "Pod", Name: "foo-1"},
+			},
+			false,
+			true,
+			[]*endpoint.Endpoint{
+				{DNSName: "foo-0.service.example.org", Targets: endpoint.Targets{"0.0.0.0"}},
+				{DNSName: "foo-1.service.example.org", Targets: endpoint.Targets{"1.1.1.1"}},
+				{DNSName: "service.example.org", Targets: endpoint.Targets{"0.0.0.0","1.1.1.1"}},
 			},
 			false,
 		},
@@ -2775,6 +2846,7 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 				{APIVersion: "", Kind: "Pod", Name: "foo-0"},
 				{APIVersion: "", Kind: "Pod", Name: "foo-1"},
 			},
+			false,
 			false,
 			[]*endpoint.Endpoint{},
 			false,
@@ -2806,6 +2878,7 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 				{APIVersion: "", Kind: "Pod", Name: "foo-0"},
 				{APIVersion: "", Kind: "Pod", Name: "foo-1"},
 			},
+			false,
 			false,
 			[]*endpoint.Endpoint{
 				{DNSName: "foo-0.service.example.org", Targets: endpoint.Targets{"1.1.1.1"}, RecordTTL: endpoint.TTL(1)},
@@ -2841,6 +2914,7 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 				{APIVersion: "", Kind: "Pod", Name: "foo-1"},
 			},
 			false,
+			false,
 			[]*endpoint.Endpoint{
 				{DNSName: "foo-0.service.example.org", Targets: endpoint.Targets{"1.1.1.1"}},
 				{DNSName: "service.example.org", Targets: endpoint.Targets{"1.1.1.1"}},
@@ -2874,6 +2948,7 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 				{APIVersion: "", Kind: "Pod", Name: "foo-1"},
 			},
 			true,
+			false,
 			[]*endpoint.Endpoint{
 				{DNSName: "foo-0.service.example.org", Targets: endpoint.Targets{"1.1.1.1"}},
 				{DNSName: "foo-1.service.example.org", Targets: endpoint.Targets{"1.1.1.2"}},
@@ -2908,6 +2983,7 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 				{APIVersion: "", Kind: "Pod", Name: "foo-1"},
 			},
 			false,
+			false,
 			[]*endpoint.Endpoint{
 				{DNSName: "service.example.org", Targets: endpoint.Targets{"1.1.1.1", "1.1.1.2"}},
 			},
@@ -2936,6 +3012,7 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 			[]string{"foo-0"},
 			[]bool{true, true},
 			[]*v1.ObjectReference{nil},
+			false,
 			false,
 			[]*endpoint.Endpoint{},
 			false,
@@ -2973,6 +3050,7 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 					Spec: v1.PodSpec{
 						Containers: []v1.Container{},
 						Hostname:   tc.hostnames[i],
+						NodeName:   fmt.Sprintf("%s-node", podname),
 					},
 					ObjectMeta: metav1.ObjectMeta{
 						Namespace:   tc.svcNamespace,
@@ -3014,6 +3092,25 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 			_, err = kubernetes.CoreV1().Endpoints(tc.svcNamespace).Create(context.Background(), endpointsObject, metav1.CreateOptions{})
 			require.NoError(t, err)
 
+			for i, podname := range tc.podnames {
+				node := &v1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:      fmt.Sprintf("%s-node", podname),
+					},
+					Status: v1.NodeStatus{
+						Addresses: []v1.NodeAddress{
+							{
+							Type: "ExternalIP",
+							Address: fmt.Sprintf("%d.%d.%d.%d", i, i, i, i),
+							},
+						},
+					},
+				}
+
+			_, err = kubernetes.CoreV1().Nodes().Create(context.Background(), node, metav1.CreateOptions{})
+			require.NoError(t, err)
+			}
+
 			// Create our object under test and get the endpoints.
 			client, _ := NewServiceSource(
 				kubernetes,
@@ -3023,8 +3120,8 @@ func TestHeadlessServicesHostIP(t *testing.T) {
 				false,
 				tc.compatibility,
 				true,
-				true,
-				false,
+				!tc.publishPublicHostIP,
+				tc.publishPublicHostIP,
 				false,
 				[]string{},
 				tc.ignoreHostnameAnnotation,
@@ -3124,6 +3221,8 @@ func TestExternalServices(t *testing.T) {
 			}
 			_, err := kubernetes.CoreV1().Services(service.Namespace).Create(context.Background(), service, metav1.CreateOptions{})
 			require.NoError(t, err)
+
+
 
 			// Create our object under test and get the endpoints.
 			client, _ := NewServiceSource(
